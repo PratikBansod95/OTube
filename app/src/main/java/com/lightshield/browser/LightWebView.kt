@@ -221,61 +221,31 @@ class LightWebView(context: Context) : WebView(context) {
     }
 
     private fun injectPlayerRecovery(view: WebView?) {
+        // Keep this conservative: aggressive seeking / forced play / DOM observers
+        // caused mid-video black flashes when YouTube briefly toggled ad UI classes.
         val js = """
             (function(){
               if (window.__otubePlayerRecovery) return;
               window.__otubePlayerRecovery = true;
 
-              function clickSkip() {
+              function isClearlyAd() {
+                var player = document.querySelector('#movie_player.html5-video-player, .html5-video-player');
+                if (!player || !player.classList.contains('ad-showing')) return false;
+                return !!document.querySelector(
+                  '.ytp-ad-player-overlay, .ytp-ad-progress-list, .ytp-ad-text, .ytp-ad-preview-container, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button'
+                );
+              }
+
+              function clickSkipOnly() {
+                if (!isClearlyAd()) return;
                 var btn = document.querySelector(
                   '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-container button, .ytp-ad-overlay-close-button'
                 );
                 if (btn) { try { btn.click(); } catch (e) {} }
               }
 
-              function forcePlay() {
-                var video = document.querySelector('video');
-                if (!video) return;
-                try {
-                  var p = video.play();
-                  if (p && p.catch) p.catch(function(){});
-                } catch (e) {}
-              }
-
-              function skipAdFast() {
-                var player = document.querySelector('.html5-video-player.ad-showing, .ad-showing');
-                var video = document.querySelector('video');
-                clickSkip();
-                if (player && video) {
-                  // Prefer skip button; only seek when duration is known and short (typical ads).
-                  try {
-                    if (isFinite(video.duration) && video.duration > 0 && video.duration < 120) {
-                      video.currentTime = Math.max(0, video.duration - 0.2);
-                    }
-                  } catch (e) {}
-                  forcePlay();
-                }
-              }
-
-              // If the main video sits black/paused with data, nudge playback.
-              function recoverStalled() {
-                var video = document.querySelector('video');
-                if (!video) return;
-                var player = document.querySelector('.html5-video-player');
-                var showingAd = !!(player && player.classList.contains('ad-showing'));
-                if (showingAd) { skipAdFast(); return; }
-                if (video.readyState >= 2 && video.paused && !video.ended) {
-                  forcePlay();
-                }
-              }
-
-              skipAdFast();
-              forcePlay();
-              setInterval(function(){ skipAdFast(); recoverStalled(); }, 700);
-              if (!window.__otubeAdObserver) {
-                window.__otubeAdObserver = new MutationObserver(function(){ skipAdFast(); });
-                window.__otubeAdObserver.observe(document.documentElement, {childList:true, subtree:true});
-              }
+              clickSkipOnly();
+              setInterval(clickSkipOnly, 1500);
             })();
         """.trimIndent()
         view?.post { view.evaluateJavascript(js, null) }
@@ -289,6 +259,7 @@ class LightWebView(context: Context) : WebView(context) {
         val braveSelectors = cosmetics.hideSelectors
             .asSequence()
             .filter { it.isNotBlank() && !it.contains("</") }
+            .filter { !isUnsafePlayerSelector(it) }
             .take(800)
             .toList()
 
@@ -323,6 +294,18 @@ class LightWebView(context: Context) : WebView(context) {
     private fun isYoutubeUrl(url: String): Boolean {
         val host = safeHost(url) ?: return false
         return host.contains("youtube.com") || host.contains("youtu.be")
+    }
+
+    /** Drop cosmetic selectors that can blank the actual player mid-playback. */
+    private fun isUnsafePlayerSelector(selector: String): Boolean {
+        val s = selector.lowercase().trim()
+        if (s == "video" || s.startsWith("video.") || s.startsWith("video[") || s.startsWith("video:")) {
+            return true
+        }
+        if (s.contains("html5-video-player") || s.contains("html5-video-container")) return true
+        if (s.contains("ytp-html5") || s.contains("#movie_player") || s.contains("movie_player")) return true
+        if (s.contains("ytd-player#") || s.contains("ytd-player.") || s == "ytd-player") return true
+        return false
     }
 
     private fun safeHost(url: String): String? =
