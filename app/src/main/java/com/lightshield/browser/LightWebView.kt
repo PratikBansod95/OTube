@@ -18,6 +18,8 @@ import android.widget.FrameLayout
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import com.lightshield.filters.FilterListManager
 import com.lightshield.privacy.HttpsEnforcer
 import com.lightshield.utils.LightCookieManager
@@ -42,6 +44,7 @@ class LightWebView(context: Context) : WebView(context) {
         setLayerType(LAYER_TYPE_NONE, null)
         configureSettings()
         LightCookieManager.configureForPrivacy()
+        installDocumentStartAdStripper()
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
@@ -220,32 +223,120 @@ class LightWebView(context: Context) : WebView(context) {
         return WebResourceResponse(mime, "utf-8", 200, "OK", headers, ByteArrayInputStream(body))
     }
 
+    /**
+     * Strip ad payloads from YouTube player JSON before page scripts run.
+     * This prevents many preroll/midroll ads without seeking the content video.
+     */
+    private fun installDocumentStartAdStripper() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+        val script = """
+            (function(){
+              if (window.__otubeAdStrip) return;
+              window.__otubeAdStrip = true;
+
+              function clean(obj) {
+                if (!obj || typeof obj !== 'object') return obj;
+                try {
+                  if (Object.prototype.hasOwnProperty.call(obj, 'adPlacements')) obj.adPlacements = [];
+                  if (Object.prototype.hasOwnProperty.call(obj, 'playerAds')) obj.playerAds = [];
+                  if (Object.prototype.hasOwnProperty.call(obj, 'adSlots')) obj.adSlots = [];
+                  if (Object.prototype.hasOwnProperty.call(obj, 'adBreakHeartbeatParams')) delete obj.adBreakHeartbeatParams;
+                  if (obj.playerResponse) clean(obj.playerResponse);
+                  if (obj.player && obj.player.args) {
+                    var raw = obj.player.args.raw_player_response;
+                    if (typeof raw === 'string') {
+                      try {
+                        var parsed = JSON.parse(raw);
+                        clean(parsed);
+                        obj.player.args.raw_player_response = JSON.stringify(parsed);
+                      } catch (e) {}
+                    } else if (raw && typeof raw === 'object') {
+                      clean(raw);
+                    }
+                  }
+                } catch (e) {}
+                return obj;
+              }
+
+              var origParse = JSON.parse;
+              JSON.parse = function(text, reviver) {
+                var value = origParse.call(this, text, reviver);
+                try { clean(value); } catch (e) {}
+                return value;
+              };
+
+              try {
+                var tipr;
+                Object.defineProperty(window, 'ytInitialPlayerResponse', {
+                  configurable: true,
+                  enumerable: true,
+                  get: function(){ return tipr; },
+                  set: function(v){ tipr = clean(v); }
+                });
+              } catch (e) {}
+            })();
+        """.trimIndent()
+        try {
+            WebViewCompat.addDocumentStartJavaScript(
+                this,
+                script,
+                setOf(
+                    "https://*.youtube.com",
+                    "https://youtube.com",
+                    "https://m.youtube.com",
+                    "https://www.youtube.com",
+                    "https://music.youtube.com",
+                    "https://youtu.be"
+                )
+            )
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun injectPlayerRecovery(view: WebView?) {
-        // Keep this conservative: aggressive seeking / forced play / DOM observers
-        // caused mid-video black flashes when YouTube briefly toggled ad UI classes.
+        // Only act when an ad is clearly showing — speed through / skip without
+        // touching normal content playback (avoids mid-video black flashes).
         val js = """
             (function(){
               if (window.__otubePlayerRecovery) return;
               window.__otubePlayerRecovery = true;
+              var wasAd = false;
 
               function isClearlyAd() {
                 var player = document.querySelector('#movie_player.html5-video-player, .html5-video-player');
                 if (!player || !player.classList.contains('ad-showing')) return false;
                 return !!document.querySelector(
-                  '.ytp-ad-player-overlay, .ytp-ad-progress-list, .ytp-ad-text, .ytp-ad-preview-container, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button'
+                  '.ytp-ad-player-overlay, .ytp-ad-progress-list, .ytp-ad-text, .ytp-ad-preview-container, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .video-ads.ytp-ad-module'
                 );
               }
 
-              function clickSkipOnly() {
-                if (!isClearlyAd()) return;
-                var btn = document.querySelector(
-                  '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-container button, .ytp-ad-overlay-close-button'
-                );
-                if (btn) { try { btn.click(); } catch (e) {} }
+              function tick() {
+                var video = document.querySelector('video');
+                var ad = isClearlyAd();
+                if (ad) {
+                  wasAd = true;
+                  var btn = document.querySelector(
+                    '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-container button, .ytp-ad-overlay-close-button'
+                  );
+                  if (btn) { try { btn.click(); } catch (e) {} }
+                  if (video) {
+                    try { video.muted = true; } catch (e) {}
+                    try { video.playbackRate = 16; } catch (e) {}
+                    try {
+                      if (isFinite(video.duration) && video.duration > 0 && video.currentTime + 0.5 < video.duration) {
+                        video.currentTime = Math.max(0, video.duration - 0.15);
+                      }
+                    } catch (e) {}
+                  }
+                } else if (wasAd && video) {
+                  wasAd = false;
+                  try { video.playbackRate = 1; } catch (e) {}
+                  try { video.muted = false; } catch (e) {}
+                }
               }
 
-              clickSkipOnly();
-              setInterval(clickSkipOnly, 1500);
+              tick();
+              setInterval(tick, 500);
             })();
         """.trimIndent()
         view?.post { view.evaluateJavascript(js, null) }
