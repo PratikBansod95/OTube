@@ -95,7 +95,7 @@ class LightWebView(context: Context) : WebView(context) {
                 ) {
                     // Return empty 200 + CORS so YouTube's player fails closed quickly
                     // instead of hanging on a black frame waiting for a 403/CORS error.
-                    return emptyBlockedResponse(url, request.method)
+                    return emptyBlockedResponse(url, request.method, request.requestHeaders)
                 }
                 return super.shouldInterceptRequest(view, request)
             }
@@ -197,7 +197,11 @@ class LightWebView(context: Context) : WebView(context) {
      * Empty success response with permissive CORS. Prefer this over 403: YouTube XHR
      * often waits/retries on failed ad calls and leaves the player black until timeout.
      */
-    private fun emptyBlockedResponse(url: String, method: String?): WebResourceResponse {
+    private fun emptyBlockedResponse(
+        url: String,
+        method: String?,
+        requestHeaders: Map<String, String>?
+    ): WebResourceResponse {
         val lower = url.lowercase()
         val (mime, body) = when {
             method.equals("OPTIONS", ignoreCase = true) ->
@@ -214,12 +218,22 @@ class LightWebView(context: Context) : WebView(context) {
                 "image/png" to ByteArray(0)
             else -> "text/plain" to ByteArray(0)
         }
-        val headers = mapOf(
-            "Access-Control-Allow-Origin" to "*",
+        // Credentialed XHR rejects ACAO: *; echo Origin when present.
+        val origin = requestHeaders?.entries
+            ?.firstOrNull { it.key.equals("Origin", ignoreCase = true) }
+            ?.value
+            ?.takeIf { it.isNotBlank() }
+            ?: "*"
+        val headers = mutableMapOf(
+            "Access-Control-Allow-Origin" to origin,
             "Access-Control-Allow-Methods" to "GET, POST, OPTIONS",
             "Access-Control-Allow-Headers" to "*",
             "Cache-Control" to "no-store"
         )
+        if (origin != "*") {
+            headers["Access-Control-Allow-Credentials"] = "true"
+            headers["Vary"] = "Origin"
+        }
         return WebResourceResponse(mime, "utf-8", 200, "OK", headers, ByteArrayInputStream(body))
     }
 
