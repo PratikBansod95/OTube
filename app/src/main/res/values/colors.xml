@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="otube_red">#FFFF0000</color>
+    <color name="otube_black">#FF0F0F0F</color>
+    <color name="otube_white">#FFF1F1F1</color>
+    <color name="ic_launcher_background">#FF0F0F0F</color>
+</resources>

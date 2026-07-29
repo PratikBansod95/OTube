@@ -1,0 +1,33 @@
+! Title: OTube EasyPrivacy seed (network rules only)
+! The app refreshes the full EasyPrivacy list when online (24h cache).
+||facebook.net^
+||connect.facebook.net^
+||facebook.com/tr^
+||pixel.facebook.com^
+||hotjar.com^
+||static.hotjar.com^
+||mixpanel.com^
+||api.mixpanel.com^
+||adnxs.com^
+||criteo.com^
+||demdex.net^
+||mathtag.com^
+||segment.io^
+||segment.com^
+||amplitude.com^
+||sentry.io^$third-party
+||fullstory.com^
+||mouseflow.com^
+||clarity.ms^
+||newrelic.com^
+||nr-data.net^
+||googletagmanager.com^
+||google-analytics.com^
+||stats.g.doubleclick.net^
+||bat.bing.com^
+||ads-twitter.com^
+||analytics.twitter.com^
+||snap.licdn.com^
+||px.ads.linkedin.com^
+||log.byteoversea.com^
+||analytics.tiktok.com^

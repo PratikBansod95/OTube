@@ -1,0 +1,17 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.apk
+*.ap_
+*.aab
+# Vendored Brave clone — not shipped; see README-native-adblock.md
+/external/adblock-rust/
+/external/adblock-ffi/
