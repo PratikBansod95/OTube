@@ -22,6 +22,7 @@ import com.lightshield.filters.FilterListManager
 import com.lightshield.privacy.HttpsEnforcer
 import com.lightshield.utils.LightCookieManager
 import org.json.JSONArray
+import java.io.ByteArrayInputStream
 
 class LightWebView(context: Context) : WebView(context) {
     private val interceptor = RequestInterceptor(context)
@@ -57,12 +58,23 @@ class LightWebView(context: Context) : WebView(context) {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                if (!url.isNullOrBlank()) documentUrl = url
+                if (!url.isNullOrBlank()) {
+                    documentUrl = url
+                    // Install early so SPA navigations / stalled players recover sooner.
+                    if (isYoutubeUrl(url)) {
+                        injectPlayerRecovery(view)
+                    }
+                }
             }
 
             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                 super.doUpdateVisitedHistory(view, url, isReload)
-                if (!url.isNullOrBlank()) documentUrl = url
+                if (!url.isNullOrBlank()) {
+                    documentUrl = url
+                    if (isYoutubeUrl(url)) {
+                        injectPlayerRecovery(view)
+                    }
+                }
             }
 
             override fun shouldInterceptRequest(
@@ -78,14 +90,9 @@ class LightWebView(context: Context) : WebView(context) {
                         documentUrl
                     )
                 ) {
-                    return WebResourceResponse(
-                        "text/plain",
-                        "utf-8",
-                        403,
-                        "Blocked",
-                        emptyMap(),
-                        null
-                    )
+                    // Return empty 200 + CORS so YouTube's player fails closed quickly
+                    // instead of hanging on a black frame waiting for a 403/CORS error.
+                    return emptyBlockedResponse(url, request.method)
                 }
                 return super.shouldInterceptRequest(view, request)
             }
@@ -95,6 +102,9 @@ class LightWebView(context: Context) : WebView(context) {
                 if (url == null) return
                 documentUrl = url
                 injectCosmeticFiltersIfNeeded(view, url)
+                if (isYoutubeUrl(url)) {
+                    injectPlayerRecovery(view)
+                }
             }
         }
 
@@ -180,6 +190,97 @@ class LightWebView(context: Context) : WebView(context) {
         setBackgroundColor(Color.BLACK)
     }
 
+    /**
+     * Empty success response with permissive CORS. Prefer this over 403: YouTube XHR
+     * often waits/retries on failed ad calls and leaves the player black until timeout.
+     */
+    private fun emptyBlockedResponse(url: String, method: String?): WebResourceResponse {
+        val lower = url.lowercase()
+        val (mime, body) = when {
+            method.equals("OPTIONS", ignoreCase = true) ->
+                "text/plain" to ByteArray(0)
+            lower.contains(".js") || lower.contains("javascript") ->
+                "application/javascript" to ByteArray(0)
+            lower.contains(".json") || lower.contains("/pagead/") ||
+                lower.contains("googleadservices") || lower.contains("doubleclick") ->
+                "application/json" to "{}".toByteArray()
+            lower.contains(".css") ->
+                "text/css" to ByteArray(0)
+            lower.contains(".png") || lower.contains(".jpg") || lower.contains(".gif") ||
+                lower.contains(".webp") || lower.contains("image") ->
+                "image/png" to ByteArray(0)
+            else -> "text/plain" to ByteArray(0)
+        }
+        val headers = mapOf(
+            "Access-Control-Allow-Origin" to "*",
+            "Access-Control-Allow-Methods" to "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers" to "*",
+            "Cache-Control" to "no-store"
+        )
+        return WebResourceResponse(mime, "utf-8", 200, "OK", headers, ByteArrayInputStream(body))
+    }
+
+    private fun injectPlayerRecovery(view: WebView?) {
+        val js = """
+            (function(){
+              if (window.__otubePlayerRecovery) return;
+              window.__otubePlayerRecovery = true;
+
+              function clickSkip() {
+                var btn = document.querySelector(
+                  '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-container button, .ytp-ad-overlay-close-button'
+                );
+                if (btn) { try { btn.click(); } catch (e) {} }
+              }
+
+              function forcePlay() {
+                var video = document.querySelector('video');
+                if (!video) return;
+                try {
+                  var p = video.play();
+                  if (p && p.catch) p.catch(function(){});
+                } catch (e) {}
+              }
+
+              function skipAdFast() {
+                var player = document.querySelector('.html5-video-player.ad-showing, .ad-showing');
+                var video = document.querySelector('video');
+                clickSkip();
+                if (player && video) {
+                  // Prefer skip button; only seek when duration is known and short (typical ads).
+                  try {
+                    if (isFinite(video.duration) && video.duration > 0 && video.duration < 120) {
+                      video.currentTime = Math.max(0, video.duration - 0.2);
+                    }
+                  } catch (e) {}
+                  forcePlay();
+                }
+              }
+
+              // If the main video sits black/paused with data, nudge playback.
+              function recoverStalled() {
+                var video = document.querySelector('video');
+                if (!video) return;
+                var player = document.querySelector('.html5-video-player');
+                var showingAd = !!(player && player.classList.contains('ad-showing'));
+                if (showingAd) { skipAdFast(); return; }
+                if (video.readyState >= 2 && video.paused && !video.ended) {
+                  forcePlay();
+                }
+              }
+
+              skipAdFast();
+              forcePlay();
+              setInterval(function(){ skipAdFast(); recoverStalled(); }, 700);
+              if (!window.__otubeAdObserver) {
+                window.__otubeAdObserver = new MutationObserver(function(){ skipAdFast(); });
+                window.__otubeAdObserver.observe(document.documentElement, {childList:true, subtree:true});
+              }
+            })();
+        """.trimIndent()
+        view?.post { view.evaluateJavascript(js, null) }
+    }
+
     private fun injectCosmeticFiltersIfNeeded(view: WebView?, url: String) {
         val host = safeHost(url) ?: return
         val isYoutube = host.contains("youtube.com") || host.contains("youtu.be")
@@ -214,28 +315,14 @@ class LightWebView(context: Context) : WebView(context) {
                 window.__otubeScriptletApplied = true;
                 try { (0, eval)(scriptlet); } catch (e) {}
               }
-
-              function skipAd() {
-                var btn = document.querySelector(
-                  '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-container button'
-                );
-                if (btn) btn.click();
-                var video = document.querySelector('video');
-                var player = document.querySelector('.html5-video-player.ad-showing');
-                if (player && video && video.duration && isFinite(video.duration)) {
-                  try { video.currentTime = video.duration; } catch (e) {}
-                }
-              }
-              if (${if (isYoutube) "true" else "false"}) {
-                skipAd();
-                if (!window.__otubeAdObserver) {
-                  window.__otubeAdObserver = new MutationObserver(function(){ skipAd(); });
-                  window.__otubeAdObserver.observe(document.documentElement, {childList:true, subtree:true});
-                }
-              }
             })();
         """.trimIndent()
         view?.post { view.evaluateJavascript(js, null) }
+    }
+
+    private fun isYoutubeUrl(url: String): Boolean {
+        val host = safeHost(url) ?: return false
+        return host.contains("youtube.com") || host.contains("youtu.be")
     }
 
     private fun safeHost(url: String): String? =
