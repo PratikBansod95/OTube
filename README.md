@@ -2,6 +2,8 @@
 
 YouTube-focused Android browser with native **adblock-rust** (when native libs are present) plus privacy defaults.
 
+Inspired by [Brave Browser](https://brave.com/) — privacy-first browsing and strong ad/tracker blocking for a cleaner YouTube experience.
+
 ## What it does
 
 - Opens YouTube in a full-screen WebView
