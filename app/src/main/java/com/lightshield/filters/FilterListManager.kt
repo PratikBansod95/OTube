@@ -2,6 +2,7 @@ package com.lightshield.filters
 
 import android.content.Context
 import android.util.Log
+import com.lightshield.adblock.NativeAdblock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -12,32 +13,44 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Downloads and caches EasyList / EasyPrivacy and matches network requests with a
- * practical ABP subset: ||host anchors, * wildcards, @@ exceptions, and common
- * $options (third-party, script, image, stylesheet, xmlhttprequest, domain=).
- * Cosmetic rules are ignored — handled in the WebView.
+ * Loads EasyList / EasyPrivacy and blocks with Brave's adblock-rust when the native
+ * library is present. Falls back to a Kotlin ABP subset otherwise.
  */
 class FilterListManager private constructor(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val loadMutex = Mutex()
     private val loaded = AtomicBoolean(false)
-    private val engine = AtomicReference(Engine.EMPTY)
+
+    private val nativeHandle = AtomicLong(0L)
+    private val kotlinEngine = AtomicReference(KotlinEngine.EMPTY)
+
+    @Volatile
+    var usingNativeEngine: Boolean = false
+        private set
 
     init {
+        // Touch NativeAdblock early so loadLibrary runs off the critical path once.
+        NativeAdblock.isLibraryLoaded
         scope.launch { ensureLoaded() }
     }
 
-    fun isBlocked(url: String, type: String, thirdParty: Boolean): Boolean {
+    fun isBlocked(url: String, type: String, thirdParty: Boolean, documentUrl: String?): Boolean {
         if (isEssentialYoutube(url)) return false
         if (!loaded.get()) return false
 
+        val handle = nativeHandle.get()
+        if (handle != 0L && NativeAdblock.isLibraryLoaded) {
+            val source = documentUrl?.takeIf { it.isNotBlank() } ?: url
+            return NativeAdblock.shouldBlock(handle, url, source, mapTypeForBrave(type))
+        }
+
         val lower = url.lowercase()
         val host = extractHost(lower) ?: return false
-        val snap = engine.get()
-
+        val snap = kotlinEngine.get()
         for (rule in snap.exceptionsFor(host)) {
             if (rule.matches(lower, host, type, thirdParty)) return false
         }
@@ -45,6 +58,21 @@ class FilterListManager private constructor(private val context: Context) {
             if (rule.matches(lower, host, type, thirdParty)) return true
         }
         return false
+    }
+
+    fun cosmeticsForUrl(url: String): NativeAdblock.CosmeticResources {
+        val handle = nativeHandle.get()
+        if (handle == 0L || !NativeAdblock.isLibraryLoaded) {
+            return NativeAdblock.CosmeticResources.EMPTY
+        }
+        return NativeAdblock.cosmetics(handle, url)
+    }
+
+    private fun mapTypeForBrave(type: String): String = when (type) {
+        "xhr" -> "xmlhttprequest"
+        "stylesheet" -> "stylesheet"
+        "subdocument" -> "subdocument"
+        else -> type
     }
 
     private fun isEssentialYoutube(url: String): Boolean {
@@ -93,15 +121,39 @@ class FilterListManager private constructor(private val context: Context) {
                 }
             }
 
+            val combined = StringBuilder(1 shl 20)
+            for ((_, file, _) in lists) {
+                if (file.exists()) {
+                    combined.append(file.readText())
+                    combined.append('\n')
+                }
+            }
+            val rulesText = combined.toString()
+
+            // Prefer Brave engine
+            if (NativeAdblock.isLibraryLoaded) {
+                val old = nativeHandle.getAndSet(0L)
+                if (old != 0L) NativeAdblock.destroy(old)
+                val handle = NativeAdblock.create(rulesText)
+                if (handle != 0L) {
+                    nativeHandle.set(handle)
+                    usingNativeEngine = true
+                    loaded.set(true)
+                    Log.i(TAG, "Brave adblock-rust engine ready (${rulesText.length} chars of rules)")
+                    return
+                }
+                Log.w(TAG, "Native engine create failed; using Kotlin fallback")
+            }
+
             val blocks = ArrayList<Rule>(16_384)
             val exceptions = ArrayList<Rule>(1_024)
             for ((_, file, _) in lists) {
                 if (file.exists()) parseIntoRules(file, blocks, exceptions)
             }
-
-            engine.set(Engine.build(blocks, exceptions))
+            kotlinEngine.set(KotlinEngine.build(blocks, exceptions))
+            usingNativeEngine = false
             loaded.set(true)
-            Log.i(TAG, "Loaded ${blocks.size} block + ${exceptions.size} exception rules")
+            Log.i(TAG, "Kotlin fallback loaded ${blocks.size} block + ${exceptions.size} exception rules")
         }
     }
 
@@ -212,8 +264,6 @@ class FilterListManager private constructor(private val context: Context) {
                     patternPart.removePrefix("|").removeSuffix("|")
                 ) ?: return null
                 if (normalized == "*") return null
-                // Keep path-like patterns only; bare substrings from full EasyList
-                // are too slow and cause false positives in a WebView YouTube client.
                 if (!normalized.contains('/') && !normalized.startsWith("*.")) return null
                 if (normalized.length < 5) return null
                 Rule(pattern = normalized, options = options)
@@ -221,12 +271,10 @@ class FilterListManager private constructor(private val context: Context) {
         }
     }
 
-    /** Options delimiter is the last `$` that is not part of an obvious URL. */
     private fun findOptionsDelimiter(raw: String): Int {
         val idx = raw.lastIndexOf('$')
         if (idx <= 0) return -1
         val after = raw.substring(idx + 1)
-        // Options look like: third-party,script,domain=foo.com
         if (after.isEmpty()) return -1
         if (after.any { it == '/' || it == ':' }) return -1
         return idx
@@ -347,8 +395,7 @@ class FilterListManager private constructor(private val context: Context) {
         }
     }
 
-    /** Host-indexed rule sets for O(candidates) matching instead of scanning every rule. */
-    class Engine(
+    class KotlinEngine(
         private val blockByHost: Map<String, List<Rule>>,
         private val exceptionByHost: Map<String, List<Rule>>,
         private val genericBlocks: List<Rule>,
@@ -379,26 +426,27 @@ class FilterListManager private constructor(private val context: Context) {
         }
 
         companion object {
-            val EMPTY = Engine(emptyMap(), emptyMap(), emptyList(), emptyList())
+            val EMPTY = KotlinEngine(emptyMap(), emptyMap(), emptyList(), emptyList())
 
-            fun build(blocks: List<Rule>, exceptions: List<Rule>): Engine {
+            fun build(blocks: List<Rule>, exceptions: List<Rule>): KotlinEngine {
                 val blockMap = HashMap<String, MutableList<Rule>>()
                 val exceptionMap = HashMap<String, MutableList<Rule>>()
                 val genericBlocks = ArrayList<Rule>()
                 val genericExceptions = ArrayList<Rule>()
 
-                fun index(rule: Rule, map: MutableMap<String, MutableList<Rule>>, generic: MutableList<Rule>) {
+                fun index(
+                    rule: Rule,
+                    map: MutableMap<String, MutableList<Rule>>,
+                    generic: MutableList<Rule>
+                ) {
                     val host = rule.hostAnchor
-                    if (host.isNullOrBlank()) {
-                        generic.add(rule)
-                    } else {
-                        map.getOrPut(host) { ArrayList() }.add(rule)
-                    }
+                    if (host.isNullOrBlank()) generic.add(rule)
+                    else map.getOrPut(host) { ArrayList() }.add(rule)
                 }
 
                 for (r in blocks) index(r, blockMap, genericBlocks)
                 for (r in exceptions) index(r, exceptionMap, genericExceptions)
-                return Engine(blockMap, exceptionMap, genericBlocks, genericExceptions)
+                return KotlinEngine(blockMap, exceptionMap, genericBlocks, genericExceptions)
             }
         }
     }

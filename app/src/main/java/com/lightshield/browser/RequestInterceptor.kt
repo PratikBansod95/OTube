@@ -5,7 +5,8 @@ import android.net.Uri
 import com.lightshield.filters.FilterListManager
 
 /**
- * Intercepts WebView subresource requests and blocks ads/trackers via FilterListManager.
+ * Intercepts WebView subresource requests and blocks ads/trackers via FilterListManager
+ * (Brave adblock-rust when available).
  */
 class RequestInterceptor(context: Context) {
     private val filters = FilterListManager.getInstance(context)
@@ -14,13 +15,13 @@ class RequestInterceptor(context: Context) {
         url: String,
         headers: Map<String, String>?,
         isMainFrame: Boolean,
-        documentHost: String?
+        documentUrl: String?
     ): Boolean {
         if (isMainFrame) return false
-        // Never block YouTube media streaming by scheme/path heuristics handled in filters
         val resourceType = detectResourceType(url, headers)
+        val documentHost = documentUrl?.let { safeHost(it) }
         val thirdParty = isThirdParty(url, documentHost)
-        return filters.isBlocked(url, resourceType, thirdParty)
+        return filters.isBlocked(url, resourceType, thirdParty, documentUrl)
     }
 
     private fun detectResourceType(url: String, headers: Map<String, String>?): String {
@@ -58,11 +59,6 @@ class RequestInterceptor(context: Context) {
         }
     }
 
-    /**
-     * True when the request host is not the document host and not a subdomain of it
-     * (and vice versa). Uses label-boundary checks to avoid `notyoutube.com` matching
-     * `youtube.com`.
-     */
     fun isThirdParty(requestUrl: String, documentHost: String?): Boolean {
         if (documentHost.isNullOrBlank()) return true
         val reqHost = try {
@@ -73,7 +69,6 @@ class RequestInterceptor(context: Context) {
         val doc = documentHost.lowercase()
         if (reqHost == doc) return false
         if (reqHost.endsWith(".$doc")) return false
-        // Same eTLD+1 for common Google/YouTube family counts as first-party for UX
         if (sameSiteFamily(reqHost, doc)) return false
         return true
     }
@@ -84,4 +79,11 @@ class RequestInterceptor(context: Context) {
         val bIn = family.any { b == it || b.endsWith(".$it") }
         return aIn && bIn
     }
+
+    private fun safeHost(url: String): String? =
+        try {
+            Uri.parse(url).host?.lowercase()
+        } catch (_: Throwable) {
+            null
+        }
 }

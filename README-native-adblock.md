@@ -1,12 +1,39 @@
-# Native adblock (not integrated)
+# Native adblock (Path A — Brave adblock-rust)
 
-This project originally planned to use Brave's [adblock-rust](https://github.com/brave/adblock-rust) via JNI.
+OTube can use Brave's [adblock-rust](https://github.com/brave/adblock-rust) engine via JNI.
 
-**Current status:** not wired. `external/adblock-rust` is a vendored clone; `external/adblock-ffi` and `jniLibs` are empty. OTube ships a Kotlin EasyList/EasyPrivacy network matcher instead.
+## Status
 
-To integrate later you would need:
+| Piece | Location |
+|--------|----------|
+| Brave engine (vendored) | `external/adblock-rust/` |
+| JNI cdylib | `external/adblock-ffi/` |
+| Kotlin bridge | `app/src/main/java/com/lightshield/adblock/NativeAdblock.kt` |
+| Built `.so` output | `app/src/main/jniLibs/{arm64-v8a,x86_64}/libadblock_ffi.so` |
 
-1. Rust + Android NDK + `cargo-ndk`
-2. A thin `cdylib` FFI crate around `adblock::Engine`
-3. JNI bindings called from `RequestInterceptor`
-4. Packaging `.so` files under `app/src/main/jniLibs/`
+If the `.so` is missing, the app falls back to the Kotlin filter matcher automatically.
+
+## Build the native library
+
+Prerequisites:
+
+- Rust (`rustup`)
+- Android NDK (SDK Manager)
+- Network (first build downloads crates)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-native-adblock.ps1
+```
+
+Then:
+
+```bat
+gradlew.bat assembleDebug
+```
+
+## Runtime behavior
+
+1. `FilterListManager` downloads EasyList + EasyPrivacy (24h cache).
+2. Rules are compiled into an `adblock::Engine` inside `libadblock_ffi.so`.
+3. `shouldInterceptRequest` calls `nativeShouldBlock`.
+4. `onPageFinished` applies Brave cosmetic hide selectors + scriptlets, plus YouTube fallback CSS.

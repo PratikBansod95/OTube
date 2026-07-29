@@ -1,17 +1,17 @@
 # OTube
 
-YouTube-focused Android browser with ad/tracker blocking and privacy defaults.
+YouTube-focused Android browser with **Brave adblock-rust** (when native libs are present) plus privacy defaults.
 
 ## What it does
 
-- Opens YouTube in a full-screen WebView (no browser chrome clutter)
-- Blocks ads and trackers using EasyList + EasyPrivacy network rules
-- Hides YouTube ad UI with targeted cosmetic CSS and skip-ad helpers
-- Upgrades `http://` navigations to HTTPS
-- Disables third-party cookies and denies camera/mic permission prompts
-- Back gesture exits fullscreen, then walks WebView history, then leaves the app
+- Opens YouTube in a full-screen WebView
+- Blocks ads/trackers with Brave's `adblock-rust` engine via JNI (`libadblock_ffi.so`)
+- Falls back to a Kotlin ABP matcher if the native library is missing
+- Applies Brave cosmetic hide selectors / scriptlets, plus YouTube fallback CSS
+- Upgrades `http://` to HTTPS, disables third-party cookies, denies camera/mic
+- Back: exit fullscreen → WebView history → leave app
 
-## Build
+## Build app
 
 ```bat
 gradlew.bat assembleDebug
@@ -20,8 +20,18 @@ gradlew.bat installDebug
 
 Requires Android SDK (see `local.properties`) and JDK 11+.
 
+## Build native Brave engine
+
+Requires Rust, Android NDK, and MSVC Build Tools (host linker on Windows):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-native-adblock.ps1
+```
+
+See `README-native-adblock.md`.
+
 ## Notes
 
 - Package id: `com.lightshield` (app label: **OTube**)
-- Native Brave `adblock-rust` was explored under `external/` but is not wired (no Rust/NDK toolchain in this rebuild). The Kotlin ABP matcher indexes host-anchored rules for performance and skips cosmetic list entries.
-- Filter lists ship as small seeds in `assets/` and refresh from easylist.to every 24 hours when online.
+- Filter lists ship as seeds in `assets/` and refresh from easylist.to every 24 hours when online
+- Prebuilt `.so` files live under `app/src/main/jniLibs/`

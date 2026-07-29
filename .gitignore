@@ -12,6 +12,6 @@ local.properties
 *.apk
 *.ap_
 *.aab
-# Vendored Brave clone — not shipped; see README-native-adblock.md
+# Vendored Brave engine source is large; keep FFI + built .so in repo
 /external/adblock-rust/
-/external/adblock-ffi/
+/external/adblock-ffi/target/

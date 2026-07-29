@@ -18,16 +18,21 @@ import android.widget.FrameLayout
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.lightshield.filters.FilterListManager
 import com.lightshield.privacy.HttpsEnforcer
 import com.lightshield.utils.LightCookieManager
+import org.json.JSONArray
 
 class LightWebView(context: Context) : WebView(context) {
     private val interceptor = RequestInterceptor(context)
+    private val filters = FilterListManager.getInstance(context)
     private val httpsEnforcer = HttpsEnforcer()
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
+
     @Volatile
-    private var documentHost: String? = null
+    private var documentUrl: String? = null
+
     @Volatile
     var isInCustomView: Boolean = false
         private set
@@ -52,15 +57,12 @@ class LightWebView(context: Context) : WebView(context) {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                documentHost = url?.let { safeHost(it) }
+                if (!url.isNullOrBlank()) documentUrl = url
             }
 
             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                 super.doUpdateVisitedHistory(view, url, isReload)
-                // YouTube SPA navigations often skip full reloads; keep host fresh.
-                if (!url.isNullOrBlank()) {
-                    documentHost = safeHost(url) ?: documentHost
-                }
+                if (!url.isNullOrBlank()) documentUrl = url
             }
 
             override fun shouldInterceptRequest(
@@ -73,7 +75,7 @@ class LightWebView(context: Context) : WebView(context) {
                         url,
                         request.requestHeaders,
                         request.isForMainFrame,
-                        documentHost
+                        documentUrl
                     )
                 ) {
                     return WebResourceResponse(
@@ -91,7 +93,7 @@ class LightWebView(context: Context) : WebView(context) {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (url == null) return
-                documentHost = safeHost(url) ?: documentHost
+                documentUrl = url
                 injectCosmeticFiltersIfNeeded(view, url)
             }
         }
@@ -180,54 +182,38 @@ class LightWebView(context: Context) : WebView(context) {
 
     private fun injectCosmeticFiltersIfNeeded(view: WebView?, url: String) {
         val host = safeHost(url) ?: return
-        if (!host.contains("youtube.com") && !host.contains("youtu.be") &&
-            !host.contains("music.youtube.com")
-        ) {
-            return
-        }
+        val isYoutube = host.contains("youtube.com") || host.contains("youtu.be")
 
-        // Targeted YouTube ad selectors only — avoid broad [id*="ad"] which breaks UI.
+        val cosmetics = filters.cosmeticsForUrl(url)
+        val braveSelectors = cosmetics.hideSelectors
+            .asSequence()
+            .filter { it.isNotBlank() && !it.contains("</") }
+            .take(800)
+            .toList()
+
+        val youtubeFallback = if (isYoutube) YOUTUBE_FALLBACK_SELECTORS else emptyList()
+        val allSelectors = (braveSelectors + youtubeFallback).distinct()
+
+        val selectorJson = JSONArray(allSelectors).toString()
+        val scriptletJson = org.json.JSONObject.quote(cosmetics.injectedScript)
+
         val js = """
             (function(){
-              var css = `
-                ytd-ad-slot-renderer,
-                ytd-promoted-sparkles-web-renderer,
-                ytd-promoted-sparkles-text-search-renderer,
-                ytd-promoted-video-renderer,
-                ytd-action-companion-ad-renderer,
-                ytd-display-ad-renderer,
-                ytd-in-feed-ad-layout-renderer,
-                ytd-banner-promo-renderer,
-                ytd-statement-banner-renderer,
-                ytd-player-legacy-desktop-watch-ads-renderer,
-                ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"],
-                ytm-promoted-sparkles-web-renderer,
-                ytm-promoted-video-renderer,
-                ytm-companion-ad-renderer,
-                ytm-banner-promo-renderer,
-                #masthead-ad,
-                #player-ads,
-                #offer-module,
-                .ytp-ad-module,
-                .ytp-ad-overlay-container,
-                .ytp-ad-progress-list,
-                .ytp-ad-message-container,
-                .video-ads,
-                .ytp-ad-player-overlay,
-                .ytp-ad-player-overlay-layout,
-                tp-yt-paper-dialog.ytd-popup-container,
-                ytd-mealbar-promo-renderer,
-                ytd-merch-shelf-renderer {
-                  display: none !important;
-                }
-              `;
+              var selectors = $selectorJson;
+              var css = selectors.map(function(s){ return s + '{display:none!important;}'; }).join('\n');
               var style = document.getElementById('otube-ad-style');
               if (!style) {
                 style = document.createElement('style');
                 style.id = 'otube-ad-style';
                 (document.head || document.documentElement).appendChild(style);
               }
-              if (style.textContent !== css) style.textContent = css;
+              style.textContent = css;
+
+              var scriptlet = $scriptletJson;
+              if (scriptlet && !window.__otubeScriptletApplied) {
+                window.__otubeScriptletApplied = true;
+                try { (0, eval)(scriptlet); } catch (e) {}
+              }
 
               function skipAd() {
                 var btn = document.querySelector(
@@ -240,10 +226,12 @@ class LightWebView(context: Context) : WebView(context) {
                   try { video.currentTime = video.duration; } catch (e) {}
                 }
               }
-              skipAd();
-              if (!window.__otubeAdObserver) {
-                window.__otubeAdObserver = new MutationObserver(function(){ skipAd(); });
-                window.__otubeAdObserver.observe(document.documentElement, {childList:true, subtree:true});
+              if (${if (isYoutube) "true" else "false"}) {
+                skipAd();
+                if (!window.__otubeAdObserver) {
+                  window.__otubeAdObserver = new MutationObserver(function(){ skipAd(); });
+                  window.__otubeAdObserver.observe(document.documentElement, {childList:true, subtree:true});
+                }
               }
             })();
         """.trimIndent()
@@ -256,4 +244,30 @@ class LightWebView(context: Context) : WebView(context) {
         } catch (_: Throwable) {
             null
         }
+
+    companion object {
+        private val YOUTUBE_FALLBACK_SELECTORS = listOf(
+            "ytd-ad-slot-renderer",
+            "ytd-promoted-sparkles-web-renderer",
+            "ytd-promoted-sparkles-text-search-renderer",
+            "ytd-promoted-video-renderer",
+            "ytd-action-companion-ad-renderer",
+            "ytd-display-ad-renderer",
+            "ytd-in-feed-ad-layout-renderer",
+            "ytd-banner-promo-renderer",
+            "ytd-statement-banner-renderer",
+            "ytd-player-legacy-desktop-watch-ads-renderer",
+            "ytm-promoted-sparkles-web-renderer",
+            "ytm-promoted-video-renderer",
+            "ytm-companion-ad-renderer",
+            "#masthead-ad",
+            "#player-ads",
+            ".ytp-ad-module",
+            ".ytp-ad-overlay-container",
+            ".video-ads",
+            ".ytp-ad-player-overlay",
+            "ytd-mealbar-promo-renderer",
+            "ytd-merch-shelf-renderer"
+        )
+    }
 }
