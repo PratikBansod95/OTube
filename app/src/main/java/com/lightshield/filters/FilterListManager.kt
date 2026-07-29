@@ -77,17 +77,29 @@ class FilterListManager private constructor(private val context: Context) {
 
     private fun isEssentialYoutube(url: String): Boolean {
         val u = url.lowercase()
+
+        // Known YouTube ad endpoints — still allow the filter engine to block these.
+        if (u.contains("youtube.com/pagead") ||
+            u.contains("youtube.com/ptracking") ||
+            u.contains("youtube.com/api/stats/ads") ||
+            u.contains("youtube.com/get_midroll") ||
+            u.contains("youtube.com/pcs/") ||
+            u.contains("youtube.com/pagead/") ||
+            u.contains("/youtubei/v1/player/ad_")
+        ) {
+            return false
+        }
+
+        // Media / CDN / player bootstrap — never block or watch can stall ~15s+.
         if (u.contains(".googlevideo.com/")) return true
         if (u.contains("youtubei.googleapis.com")) return true
+        if (u.contains("jnn-pa.googleapis.com")) return true
         if (u.contains("ytimg.com/")) return true
         if (u.contains("ggpht.com/")) return true
         if (u.contains("googleusercontent.com/")) return true
         if (u.contains("youtu.be/")) return true
-        if (u.contains("youtube.com/s/player/")) return true
-        if (u.contains("youtube.com/youtubei/")) return true
-        if (u.contains("youtube.com/api/stats/watchtime")) return true
-        if (u.contains("youtube.com/api/stats/qoe")) return true
-        if (u.contains("youtube.com/generate_204")) return true
+        if (u.contains("youtube.com/")) return true
+        if (u.contains("googleapis.com/youtube")) return true
         return false
     }
 

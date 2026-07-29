@@ -194,31 +194,15 @@ class LightWebView(context: Context) : WebView(context) {
     }
 
     /**
-     * Empty success response with permissive CORS. Prefer this over 403: YouTube XHR
-     * often waits/retries on failed ad calls and leaves the player black until timeout.
+     * Fast-fail blocked ads. Do NOT return 200 + "{}": YouTube treats that as success
+     * and can sit on the loading spinner for ~15s while it retries/parses bad ad data.
+     * 204/404 with CORS lets credentialed XHR error out immediately.
      */
     private fun emptyBlockedResponse(
         url: String,
         method: String?,
         requestHeaders: Map<String, String>?
     ): WebResourceResponse {
-        val lower = url.lowercase()
-        val (mime, body) = when {
-            method.equals("OPTIONS", ignoreCase = true) ->
-                "text/plain" to ByteArray(0)
-            lower.contains(".js") || lower.contains("javascript") ->
-                "application/javascript" to ByteArray(0)
-            lower.contains(".json") || lower.contains("/pagead/") ||
-                lower.contains("googleadservices") || lower.contains("doubleclick") ->
-                "application/json" to "{}".toByteArray()
-            lower.contains(".css") ->
-                "text/css" to ByteArray(0)
-            lower.contains(".png") || lower.contains(".jpg") || lower.contains(".gif") ||
-                lower.contains(".webp") || lower.contains("image") ->
-                "image/png" to ByteArray(0)
-            else -> "text/plain" to ByteArray(0)
-        }
-        // Credentialed XHR rejects ACAO: *; echo Origin when present.
         val origin = requestHeaders?.entries
             ?.firstOrNull { it.key.equals("Origin", ignoreCase = true) }
             ?.value
@@ -234,7 +218,27 @@ class LightWebView(context: Context) : WebView(context) {
             headers["Access-Control-Allow-Credentials"] = "true"
             headers["Vary"] = "Origin"
         }
-        return WebResourceResponse(mime, "utf-8", 200, "OK", headers, ByteArrayInputStream(body))
+
+        // Preflight: approve quickly so the real call can fail fast.
+        if (method.equals("OPTIONS", ignoreCase = true)) {
+            return WebResourceResponse(
+                "text/plain",
+                "utf-8",
+                204,
+                "No Content",
+                headers,
+                ByteArrayInputStream(ByteArray(0))
+            )
+        }
+
+        return WebResourceResponse(
+            "text/plain",
+            "utf-8",
+            404,
+            "Blocked",
+            headers,
+            ByteArrayInputStream(ByteArray(0))
+        )
     }
 
     /**
@@ -247,10 +251,15 @@ class LightWebView(context: Context) : WebView(context) {
             (function(){
               if (window.__otubeAdStrip) return;
               window.__otubeAdStrip = true;
+              var origParse = JSON.parse;
 
               function clean(obj) {
                 if (!obj || typeof obj !== 'object') return obj;
                 try {
+                  // Only touch objects that look like player responses.
+                  var looksLikePlayer = !!(obj.videoDetails || obj.streamingData || obj.playerResponse ||
+                    obj.adPlacements || obj.playerAds);
+                  if (!looksLikePlayer) return obj;
                   if (Object.prototype.hasOwnProperty.call(obj, 'adPlacements')) obj.adPlacements = [];
                   if (Object.prototype.hasOwnProperty.call(obj, 'playerAds')) obj.playerAds = [];
                   if (Object.prototype.hasOwnProperty.call(obj, 'adSlots')) obj.adSlots = [];
@@ -260,7 +269,7 @@ class LightWebView(context: Context) : WebView(context) {
                     var raw = obj.player.args.raw_player_response;
                     if (typeof raw === 'string') {
                       try {
-                        var parsed = JSON.parse(raw);
+                        var parsed = origParse.call(JSON, raw);
                         clean(parsed);
                         obj.player.args.raw_player_response = JSON.stringify(parsed);
                       } catch (e) {}
@@ -272,7 +281,6 @@ class LightWebView(context: Context) : WebView(context) {
                 return obj;
               }
 
-              var origParse = JSON.parse;
               JSON.parse = function(text, reviver) {
                 var value = origParse.call(this, text, reviver);
                 try { clean(value); } catch (e) {}
@@ -335,12 +343,9 @@ class LightWebView(context: Context) : WebView(context) {
                   if (btn) { try { btn.click(); } catch (e) {} }
                   if (video) {
                     try { video.muted = true; } catch (e) {}
-                    try { video.playbackRate = 16; } catch (e) {}
-                    try {
-                      if (isFinite(video.duration) && video.duration > 0 && video.currentTime + 0.5 < video.duration) {
-                        video.currentTime = Math.max(0, video.duration - 0.15);
-                      }
-                    } catch (e) {}
+                    try { video.playbackRate = 8; } catch (e) {}
+                    // Avoid seeking to duration — that often tears down the decoder
+                    // and leaves a long loading spinner before content resumes.
                   }
                 } else if (wasAd && video) {
                   wasAd = false;
