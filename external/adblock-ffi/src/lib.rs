@@ -1,4 +1,4 @@
-//! JNI bridge for Brave's adblock-rust engine.
+//! JNI bridge for the adblock-rust engine.
 //!
 //! Exposed to Kotlin as `com.lightshield.adblock.NativeAdblock`.
 

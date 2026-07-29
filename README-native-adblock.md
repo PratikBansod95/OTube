@@ -1,12 +1,12 @@
-# Native adblock (Path A — Brave adblock-rust)
+# Native adblock
 
-OTube can use Brave's [adblock-rust](https://github.com/brave/adblock-rust) engine via JNI.
+OTube can use the adblock-rust engine via JNI.
 
 ## Status
 
 | Piece | Location |
 |--------|----------|
-| Brave engine (vendored) | `external/adblock-rust/` |
+| Native engine (vendored) | `external/adblock-rust/` |
 | JNI cdylib | `external/adblock-ffi/` |
 | Kotlin bridge | `app/src/main/java/com/lightshield/adblock/NativeAdblock.kt` |
 | Built `.so` output | `app/src/main/jniLibs/{arm64-v8a,x86_64}/libadblock_ffi.so` |
@@ -36,4 +36,4 @@ gradlew.bat assembleDebug
 1. `FilterListManager` downloads EasyList + EasyPrivacy (24h cache).
 2. Rules are compiled into an `adblock::Engine` inside `libadblock_ffi.so`.
 3. `shouldInterceptRequest` calls `nativeShouldBlock`.
-4. `onPageFinished` applies Brave cosmetic hide selectors + scriptlets, plus YouTube fallback CSS.
+4. `onPageFinished` applies cosmetic hide selectors + scriptlets, plus YouTube fallback CSS.

@@ -1,4 +1,4 @@
-# Build Brave adblock-rust JNI library for Android.
+# Build adblock-rust JNI library for Android.
 # Prerequisites: Rust, Android NDK, cargo-ndk, MSVC Build Tools (Windows host linker)
 #
 # Usage (from repo root):

@@ -17,8 +17,8 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Loads EasyList / EasyPrivacy and blocks with Brave's adblock-rust when the native
- * library is present. Falls back to a Kotlin ABP subset otherwise.
+ * Loads EasyList / EasyPrivacy and blocks with the native adblock-rust engine when the
+ * native library is present. Falls back to a Kotlin ABP subset otherwise.
  */
 class FilterListManager private constructor(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -45,7 +45,7 @@ class FilterListManager private constructor(private val context: Context) {
         val handle = nativeHandle.get()
         if (handle != 0L && NativeAdblock.isLibraryLoaded) {
             val source = documentUrl?.takeIf { it.isNotBlank() } ?: url
-            return NativeAdblock.shouldBlock(handle, url, source, mapTypeForBrave(type))
+            return NativeAdblock.shouldBlock(handle, url, source, mapContentType(type))
         }
 
         val lower = url.lowercase()
@@ -68,7 +68,7 @@ class FilterListManager private constructor(private val context: Context) {
         return NativeAdblock.cosmetics(handle, url)
     }
 
-    private fun mapTypeForBrave(type: String): String = when (type) {
+    private fun mapContentType(type: String): String = when (type) {
         "xhr" -> "xmlhttprequest"
         "stylesheet" -> "stylesheet"
         "subdocument" -> "subdocument"
@@ -142,7 +142,7 @@ class FilterListManager private constructor(private val context: Context) {
             }
             val rulesText = combined.toString()
 
-            // Prefer Brave engine
+            // Prefer native engine
             if (NativeAdblock.isLibraryLoaded) {
                 val old = nativeHandle.getAndSet(0L)
                 if (old != 0L) NativeAdblock.destroy(old)
@@ -151,7 +151,7 @@ class FilterListManager private constructor(private val context: Context) {
                     nativeHandle.set(handle)
                     usingNativeEngine = true
                     loaded.set(true)
-                    Log.i(TAG, "Brave adblock-rust engine ready (${rulesText.length} chars of rules)")
+                    Log.i(TAG, "Native adblock-rust engine ready (${rulesText.length} chars of rules)")
                     return
                 }
                 Log.w(TAG, "Native engine create failed; using Kotlin fallback")

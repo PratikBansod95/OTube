@@ -1,13 +1,13 @@
 # OTube
 
-YouTube-focused Android browser with **Brave adblock-rust** (when native libs are present) plus privacy defaults.
+YouTube-focused Android browser with native **adblock-rust** (when native libs are present) plus privacy defaults.
 
 ## What it does
 
 - Opens YouTube in a full-screen WebView
-- Blocks ads/trackers with Brave's `adblock-rust` engine via JNI (`libadblock_ffi.so`)
+- Blocks ads/trackers with the `adblock-rust` engine via JNI (`libadblock_ffi.so`)
 - Falls back to a Kotlin ABP matcher if the native library is missing
-- Applies Brave cosmetic hide selectors / scriptlets, plus YouTube fallback CSS
+- Applies cosmetic hide selectors / scriptlets, plus YouTube fallback CSS
 - Upgrades `http://` to HTTPS, disables third-party cookies, denies camera/mic
 - Back: exit fullscreen → WebView history → leave app
 
@@ -20,7 +20,7 @@ gradlew.bat installDebug
 
 Requires Android SDK (see `local.properties`) and JDK 11+.
 
-## Build native Brave engine
+## Build native engine
 
 Requires Rust, Android NDK, and MSVC Build Tools (host linker on Windows):
 

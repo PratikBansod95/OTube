@@ -366,7 +366,7 @@ class LightWebView(context: Context) : WebView(context) {
         val isYoutube = host.contains("youtube.com") || host.contains("youtu.be")
 
         val cosmetics = filters.cosmeticsForUrl(url)
-        val braveSelectors = cosmetics.hideSelectors
+        val nativeSelectors = cosmetics.hideSelectors
             .asSequence()
             .filter { it.isNotBlank() && !it.contains("</") }
             .filter { !isUnsafePlayerSelector(it) }
@@ -374,7 +374,7 @@ class LightWebView(context: Context) : WebView(context) {
             .toList()
 
         val youtubeFallback = if (isYoutube) YOUTUBE_FALLBACK_SELECTORS else emptyList()
-        val allSelectors = (braveSelectors + youtubeFallback).distinct()
+        val allSelectors = (nativeSelectors + youtubeFallback).distinct()
 
         val selectorJson = JSONArray(allSelectors).toString()
         val scriptletJson = org.json.JSONObject.quote(cosmetics.injectedScript)

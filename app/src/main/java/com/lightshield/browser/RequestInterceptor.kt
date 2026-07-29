@@ -6,7 +6,7 @@ import com.lightshield.filters.FilterListManager
 
 /**
  * Intercepts WebView subresource requests and blocks ads/trackers via FilterListManager
- * (Brave adblock-rust when available).
+ * (native adblock-rust when available).
  */
 class RequestInterceptor(context: Context) {
     private val filters = FilterListManager.getInstance(context)

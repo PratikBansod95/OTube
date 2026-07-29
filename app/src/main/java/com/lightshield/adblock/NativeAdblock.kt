@@ -4,7 +4,7 @@ import android.util.Log
 import org.json.JSONObject
 
 /**
- * JNI facade over Brave's adblock-rust ([libadblock_ffi.so]).
+ * JNI facade over the native adblock-rust engine ([libadblock_ffi.so]).
  * Falls back gracefully when the native library is missing.
  */
 object NativeAdblock {
