@@ -4,13 +4,12 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- White O ring (safe zone ~66dp center) -->
+    <!-- Monochrome / themed icon: O + play as a single silhouette -->
     <path
         android:fillColor="#FFFFFFFF"
         android:fillType="evenOdd"
         android:pathData="M54,54m-30,0a30,30 0,1,1 60,0a30,30 0,1,1 -60,0M54,54m-15,0a15,15 0,1,1 30,0a15,15 0,1,1 -30,0" />
-    <!-- Red play triangle cut into the right of the O -->
     <path
-        android:fillColor="#FFFF0000"
+        android:fillColor="#FFFFFFFF"
         android:pathData="M57,40.5 L57,67.5 L78,54 Z" />
 </vector>
