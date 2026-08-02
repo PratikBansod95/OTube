@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import com.lightshield.browser.LightWebView
 import com.lightshield.utils.LightCookieManager
 
@@ -27,18 +28,21 @@ fun BrowserScreen() {
     var initialLoaded by remember { mutableStateOf(false) }
 
     DisposableEffect(activity) {
-        val owner = activity as? androidx.lifecycle.LifecycleOwner
+        val owner = activity as? LifecycleOwner
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE,
-                Lifecycle.Event.ON_STOP -> LightCookieManager.flush()
+                Lifecycle.Event.ON_STOP -> {
+                    // Must be synchronous — process may die immediately after.
+                    LightCookieManager.persistCookies(context.applicationContext)
+                }
                 else -> Unit
             }
         }
         owner?.lifecycle?.addObserver(observer)
         onDispose {
             owner?.lifecycle?.removeObserver(observer)
-            LightCookieManager.flush()
+            LightCookieManager.persistCookies(context.applicationContext)
         }
     }
 
@@ -68,6 +72,8 @@ fun BrowserScreen() {
         update = { wv ->
             webView = wv
             if (!initialLoaded) {
+                // Restore again right before first navigation.
+                LightCookieManager.restorePersistedCookies(context.applicationContext)
                 wv.loadUrl("https://www.youtube.com")
                 initialLoaded = true
             }

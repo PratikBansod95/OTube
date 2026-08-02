@@ -6,7 +6,6 @@ import android.graphics.Color
 import android.net.Uri
 import android.view.View
 import android.view.WindowManager
-import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -43,7 +42,8 @@ class LightWebView(context: Context) : WebView(context) {
     init {
         setLayerType(LAYER_TYPE_NONE, null)
         configureSettings()
-        LightCookieManager.configureForPrivacy(this)
+        LightCookieManager.configure(this)
+        LightCookieManager.restorePersistedCookies(context.applicationContext)
         installDocumentStartAdStripper()
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
@@ -110,8 +110,8 @@ class LightWebView(context: Context) : WebView(context) {
                 super.onPageFinished(view, url)
                 if (url == null) return
                 documentUrl = url
-                // Persist Google/YouTube session cookies while they're fresh.
-                LightCookieManager.flushAsync()
+                LightCookieManager.flush()
+                LightCookieManager.persistCookiesAsync(context.applicationContext)
                 injectCosmeticFiltersIfNeeded(view, url)
                 if (isYoutubeUrl(url)) {
                     injectPlayerRecovery(view)
@@ -178,7 +178,7 @@ class LightWebView(context: Context) : WebView(context) {
         settings.cacheMode = WebSettings.LOAD_DEFAULT
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         settings.setSupportMultipleWindows(false)
-        settings.userAgentString = settings.userAgentString + " OTube/1.0"
+        // UA is set in LightCookieManager.configure() (Chrome mobile without WebView marks).
 
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
@@ -197,8 +197,6 @@ class LightWebView(context: Context) : WebView(context) {
         } catch (_: Throwable) {
         }
 
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         setBackgroundColor(Color.BLACK)
     }
 
