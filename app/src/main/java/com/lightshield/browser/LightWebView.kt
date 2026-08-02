@@ -43,7 +43,6 @@ class LightWebView(context: Context) : WebView(context) {
         setLayerType(LAYER_TYPE_NONE, null)
         configureSettings()
         LightCookieManager.configure(this)
-        LightCookieManager.restorePersistedCookies(context.applicationContext)
         installDocumentStartAdStripper()
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
@@ -110,8 +109,7 @@ class LightWebView(context: Context) : WebView(context) {
                 super.onPageFinished(view, url)
                 if (url == null) return
                 documentUrl = url
-                LightCookieManager.flush()
-                LightCookieManager.persistCookiesAsync(context.applicationContext)
+                LightCookieManager.flushAsync()
                 injectCosmeticFiltersIfNeeded(view, url)
                 if (isYoutubeUrl(url)) {
                     injectPlayerRecovery(view)

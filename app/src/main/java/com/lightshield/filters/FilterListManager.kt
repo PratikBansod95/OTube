@@ -103,7 +103,7 @@ class FilterListManager private constructor(private val context: Context) {
         return false
     }
 
-    /** Keep Google account / OAuth endpoints unblocked so YouTube login can persist. */
+    /** Keep Google account / OAuth / cookie-check endpoints unblocked. */
     private fun isEssentialGoogleAuth(url: String): Boolean {
         val u = url.lowercase()
         if (u.contains("accounts.google.")) return true
@@ -111,12 +111,16 @@ class FilterListManager private constructor(private val context: Context) {
         if (u.contains("google.com/o/oauth2")) return true
         if (u.contains("google.com/signin")) return true
         if (u.contains("google.com/account")) return true
+        if (u.contains("google.") && u.contains("/sorry/")) return true
+        if (u.contains("google.") && u.contains("cookie")) return true
         if (u.contains("oauthaccountmanager.googleapis.com")) return true
         if (u.contains("gstatic.com/accounts")) return true
         if (u.contains("gstatic.com/og/_/js")) return true
-        if (u.contains("ssl.gstatic.com/accounts")) return true
+        if (u.contains("ssl.gstatic.com")) return true
         if (u.contains("googleapis.com/oauth2")) return true
         if (u.contains("googleapis.com/identitytoolkit")) return true
+        // Regional Google portals used by the cookie diagnostic page.
+        if (u.contains("www.google.") && (u.contains("/support") || u.contains("/intl"))) return true
         return false
     }
 

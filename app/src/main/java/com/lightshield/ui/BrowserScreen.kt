@@ -32,17 +32,14 @@ fun BrowserScreen() {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE,
-                Lifecycle.Event.ON_STOP -> {
-                    // Must be synchronous — process may die immediately after.
-                    LightCookieManager.persistCookies(context.applicationContext)
-                }
+                Lifecycle.Event.ON_STOP -> LightCookieManager.flush()
                 else -> Unit
             }
         }
         owner?.lifecycle?.addObserver(observer)
         onDispose {
             owner?.lifecycle?.removeObserver(observer)
-            LightCookieManager.persistCookies(context.applicationContext)
+            LightCookieManager.flush()
         }
     }
 
@@ -72,8 +69,6 @@ fun BrowserScreen() {
         update = { wv ->
             webView = wv
             if (!initialLoaded) {
-                // Restore again right before first navigation.
-                LightCookieManager.restorePersistedCookies(context.applicationContext)
                 wv.loadUrl("https://www.youtube.com")
                 initialLoaded = true
             }
