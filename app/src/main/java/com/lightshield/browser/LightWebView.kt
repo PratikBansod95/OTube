@@ -71,7 +71,6 @@ class LightWebView(context: Context) : WebView(context) {
                     if (isYoutubeUrl(url)) {
                         injectPlayerRecovery(view)
                         injectOpenAppSuppressor(view)
-                        injectCreditBadge(view)
                     }
                 }
             }
@@ -83,7 +82,6 @@ class LightWebView(context: Context) : WebView(context) {
                     if (isYoutubeUrl(url)) {
                         injectPlayerRecovery(view)
                         injectOpenAppSuppressor(view)
-                        injectCreditBadge(view)
                     }
                 }
             }
@@ -116,7 +114,6 @@ class LightWebView(context: Context) : WebView(context) {
                 if (isYoutubeUrl(url)) {
                     injectPlayerRecovery(view)
                     injectOpenAppSuppressor(view)
-                    injectCreditBadge(view)
                 }
             }
         }
@@ -343,11 +340,6 @@ class LightWebView(context: Context) : WebView(context) {
      */
     private fun injectOpenAppSuppressor(view: WebView?) {
         view?.post { view.evaluateJavascript(OPEN_APP_SUPPRESSOR_JS, null) }
-    }
-
-    /** Centered "By: Pratik" credit in YouTube's top bar (between logo and search). */
-    private fun injectCreditBadge(view: WebView?) {
-        view?.post { view.evaluateJavascript(CREDIT_BADGE_JS, null) }
     }
 
     private fun isYoutubeAppHandoff(url: String): Boolean {
@@ -586,59 +578,6 @@ class LightWebView(context: Context) : WebView(context) {
                 mo.observe(document.documentElement || document.body, { childList: true, subtree: true });
               } catch (e) {
                 setInterval(sweep, 1500);
-              }
-            })();
-        """.trimIndent()
-
-        private val CREDIT_BADGE_JS = """
-            (function(){
-              if (window.__otubeCreditBadge) return;
-              window.__otubeCreditBadge = true;
-
-              function ensureStyle() {
-                if (document.getElementById('otube-credit-style')) return;
-                var style = document.createElement('style');
-                style.id = 'otube-credit-style';
-                style.textContent = [
-                  '#otube-by-pratik{',
-                  '  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);',
-                  '  pointer-events:none;z-index:5;white-space:nowrap;',
-                  '  font:600 13px/1.2 "YouTube Sans",Roboto,Arial,sans-serif;',
-                  '  color:#f1f1f1;letter-spacing:0.2px;opacity:0.95;',
-                  '  text-shadow:0 1px 2px rgba(0,0,0,0.55);',
-                  '}',
-                  'ytm-mobile-topbar-renderer, #header-bar, ytd-masthead #container.ytd-masthead{',
-                  '  position:relative !important;',
-                  '}'
-                ].join('');
-                (document.head || document.documentElement).appendChild(style);
-              }
-
-              function place() {
-                ensureStyle();
-                var bar = document.querySelector('ytm-mobile-topbar-renderer') ||
-                  document.querySelector('#header-bar') ||
-                  document.querySelector('ytd-masthead #container.ytd-masthead') ||
-                  document.querySelector('ytd-masthead');
-                if (!bar) return;
-                var el = document.getElementById('otube-by-pratik');
-                if (!el) {
-                  el = document.createElement('div');
-                  el.id = 'otube-by-pratik';
-                  el.textContent = 'By: Pratik';
-                  el.setAttribute('aria-hidden', 'true');
-                }
-                if (el.parentElement !== bar) {
-                  try { bar.appendChild(el); } catch (e) {}
-                }
-              }
-
-              place();
-              try {
-                var mo = new MutationObserver(function(){ place(); });
-                mo.observe(document.documentElement || document.body, { childList: true, subtree: true });
-              } catch (e) {
-                setInterval(place, 1500);
               }
             })();
         """.trimIndent()
