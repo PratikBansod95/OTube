@@ -51,6 +51,10 @@ class LightWebView(context: Context) : WebView(context) {
                 request: WebResourceRequest?
             ): Boolean {
                 val target = request?.url?.toString() ?: return false
+                if (isYoutubeAppHandoff(target)) {
+                    // Stay inside OTube — don't jump to the Play Store / YouTube app.
+                    return true
+                }
                 val upgraded = httpsEnforcer.upgradeToHttpsIfPossible(target)
                 if (upgraded != target) {
                     view?.loadUrl(upgraded)
@@ -66,6 +70,7 @@ class LightWebView(context: Context) : WebView(context) {
                     // Install early so SPA navigations / stalled players recover sooner.
                     if (isYoutubeUrl(url)) {
                         injectPlayerRecovery(view)
+                        injectOpenAppSuppressor(view)
                     }
                 }
             }
@@ -76,6 +81,7 @@ class LightWebView(context: Context) : WebView(context) {
                     documentUrl = url
                     if (isYoutubeUrl(url)) {
                         injectPlayerRecovery(view)
+                        injectOpenAppSuppressor(view)
                     }
                 }
             }
@@ -107,6 +113,7 @@ class LightWebView(context: Context) : WebView(context) {
                 injectCosmeticFiltersIfNeeded(view, url)
                 if (isYoutubeUrl(url)) {
                     injectPlayerRecovery(view)
+                    injectOpenAppSuppressor(view)
                 }
             }
         }
@@ -311,7 +318,53 @@ class LightWebView(context: Context) : WebView(context) {
                     "https://youtu.be"
                 )
             )
+            // Hide "Open App" promo chrome as early as possible.
+            WebViewCompat.addDocumentStartJavaScript(
+                this,
+                OPEN_APP_DOCUMENT_START_SCRIPT,
+                setOf(
+                    "https://*.youtube.com",
+                    "https://youtube.com",
+                    "https://m.youtube.com",
+                    "https://www.youtube.com",
+                    "https://music.youtube.com",
+                    "https://youtu.be"
+                )
+            )
         } catch (_: Throwable) {
+        }
+    }
+
+    /**
+     * Continuously hide YouTube's "Open App" chip / banners that SPA navigations re-add.
+     */
+    private fun injectOpenAppSuppressor(view: WebView?) {
+        view?.post { view.evaluateJavascript(OPEN_APP_SUPPRESSOR_JS, null) }
+    }
+
+    private fun isYoutubeAppHandoff(url: String): Boolean {
+        val lower = url.lowercase()
+        if (lower.startsWith("intent:")) return true
+        if (lower.startsWith("vnd.youtube:") || lower.startsWith("youtube://")) return true
+        if (lower.startsWith("market://")) {
+            return lower.contains("id=com.google.android.youtube") ||
+                lower.contains("id=com.google.android.apps.youtube")
+        }
+        return try {
+            val uri = Uri.parse(url)
+            val host = uri.host?.lowercase().orEmpty()
+            val path = uri.path?.lowercase().orEmpty()
+            val query = uri.query?.lowercase().orEmpty()
+            when {
+                host == "play.google.com" &&
+                    (query.contains("id=com.google.android.youtube") ||
+                        query.contains("id=com.google.android.apps.youtube")) -> true
+                host.endsWith("youtube.com") && path.contains("/redirect") &&
+                    query.contains("q=vnd.youtube") -> true
+                else -> false
+            }
+        } catch (_: Throwable) {
+            false
         }
     }
 
@@ -427,6 +480,7 @@ class LightWebView(context: Context) : WebView(context) {
 
     companion object {
         private val YOUTUBE_FALLBACK_SELECTORS = listOf(
+            // Ads / promos
             "ytd-ad-slot-renderer",
             "ytd-promoted-sparkles-web-renderer",
             "ytd-promoted-sparkles-text-search-renderer",
@@ -447,7 +501,85 @@ class LightWebView(context: Context) : WebView(context) {
             ".video-ads",
             ".ytp-ad-player-overlay",
             "ytd-mealbar-promo-renderer",
-            "ytd-merch-shelf-renderer"
+            "ytd-merch-shelf-renderer",
+            // "Open App" / app-install prompts
+            "ytm-open-in-app-button",
+            "ytm-open-in-app-header",
+            "ytm-promo-panel-renderer",
+            "ytm-app-promo-renderer",
+            "ytm-pivot-bar-renderer[tab-identifier=\"FEapp_promo\"]",
+            ".open-app-button",
+            "button[aria-label=\"Open App\"]",
+            "button[aria-label=\"Open app\"]",
+            "a[href*=\"play.google.com/store/apps/details?id=com.google.android.youtube\"]",
+            "a[href^=\"intent:\"]",
+            "a[href^=\"vnd.youtube:\"]"
         )
+
+        private val OPEN_APP_DOCUMENT_START_SCRIPT = """
+            (function(){
+              if (window.__otubeHideOpenAppEarly) return;
+              window.__otubeHideOpenAppEarly = true;
+              var css = [
+                'ytm-open-in-app-button',
+                'ytm-open-in-app-header',
+                'ytm-promo-panel-renderer',
+                'ytm-app-promo-renderer',
+                '.open-app-button',
+                'button[aria-label="Open App"]',
+                'button[aria-label="Open app"]',
+                'a[href*="play.google.com/store/apps/details?id=com.google.android.youtube"]',
+                'a[href^="intent:"]',
+                'a[href^="vnd.youtube:"]'
+              ].map(function(s){ return s + '{display:none!important;visibility:hidden!important;pointer-events:none!important;}'; }).join('\n');
+              var style = document.createElement('style');
+              style.id = 'otube-hide-open-app';
+              style.textContent = css;
+              (document.documentElement || document).appendChild(style);
+            })();
+        """.trimIndent()
+
+        private val OPEN_APP_SUPPRESSOR_JS = """
+            (function(){
+              if (window.__otubeOpenAppSuppressor) return;
+              window.__otubeOpenAppSuppressor = true;
+
+              function looksLikeOpenApp(el) {
+                if (!el || el.nodeType !== 1) return false;
+                var label = ((el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) || '').toLowerCase();
+                if (label === 'open app' || label.indexOf('open app') !== -1) return true;
+                var text = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                if (text === 'open app') return true;
+                var href = ((el.getAttribute && el.getAttribute('href')) || '').toLowerCase();
+                if (href.indexOf('play.google.com/store/apps/details?id=com.google.android.youtube') !== -1) return true;
+                if (href.indexOf('intent:') === 0 || href.indexOf('vnd.youtube:') === 0 || href.indexOf('youtube://') === 0) return true;
+                return false;
+              }
+
+              function hide(el) {
+                try {
+                  el.style.setProperty('display', 'none', 'important');
+                  el.style.setProperty('visibility', 'hidden', 'important');
+                  el.style.setProperty('pointer-events', 'none', 'important');
+                  el.setAttribute('aria-hidden', 'true');
+                } catch (e) {}
+              }
+
+              function sweep() {
+                var nodes = document.querySelectorAll('a, button, ytm-button-renderer, ytm-open-in-app-button, [role="button"]');
+                for (var i = 0; i < nodes.length; i++) {
+                  if (looksLikeOpenApp(nodes[i])) hide(nodes[i]);
+                }
+              }
+
+              sweep();
+              try {
+                var mo = new MutationObserver(function(){ sweep(); });
+                mo.observe(document.documentElement || document.body, { childList: true, subtree: true });
+              } catch (e) {
+                setInterval(sweep, 1500);
+              }
+            })();
+        """.trimIndent()
     }
 }
