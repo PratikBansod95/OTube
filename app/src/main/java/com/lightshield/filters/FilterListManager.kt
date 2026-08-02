@@ -39,7 +39,7 @@ class FilterListManager private constructor(private val context: Context) {
     }
 
     fun isBlocked(url: String, type: String, thirdParty: Boolean, documentUrl: String?): Boolean {
-        if (isEssentialYoutube(url)) return false
+        if (isEssentialYoutube(url) || isEssentialGoogleAuth(url)) return false
         if (!loaded.get()) return false
 
         val handle = nativeHandle.get()
@@ -100,6 +100,23 @@ class FilterListManager private constructor(private val context: Context) {
         if (u.contains("youtu.be/")) return true
         if (u.contains("youtube.com/")) return true
         if (u.contains("googleapis.com/youtube")) return true
+        return false
+    }
+
+    /** Keep Google account / OAuth endpoints unblocked so YouTube login can persist. */
+    private fun isEssentialGoogleAuth(url: String): Boolean {
+        val u = url.lowercase()
+        if (u.contains("accounts.google.")) return true
+        if (u.contains("accounts.youtube.com")) return true
+        if (u.contains("google.com/o/oauth2")) return true
+        if (u.contains("google.com/signin")) return true
+        if (u.contains("google.com/account")) return true
+        if (u.contains("oauthaccountmanager.googleapis.com")) return true
+        if (u.contains("gstatic.com/accounts")) return true
+        if (u.contains("gstatic.com/og/_/js")) return true
+        if (u.contains("ssl.gstatic.com/accounts")) return true
+        if (u.contains("googleapis.com/oauth2")) return true
+        if (u.contains("googleapis.com/identitytoolkit")) return true
         return false
     }
 

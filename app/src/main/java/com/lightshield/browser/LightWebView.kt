@@ -43,7 +43,7 @@ class LightWebView(context: Context) : WebView(context) {
     init {
         setLayerType(LAYER_TYPE_NONE, null)
         configureSettings()
-        LightCookieManager.configureForPrivacy()
+        LightCookieManager.configureForPrivacy(this)
         installDocumentStartAdStripper()
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
@@ -110,6 +110,8 @@ class LightWebView(context: Context) : WebView(context) {
                 super.onPageFinished(view, url)
                 if (url == null) return
                 documentUrl = url
+                // Persist Google/YouTube session cookies while they're fresh.
+                LightCookieManager.flushAsync()
                 injectCosmeticFiltersIfNeeded(view, url)
                 if (isYoutubeUrl(url)) {
                     injectPlayerRecovery(view)
@@ -196,7 +198,7 @@ class LightWebView(context: Context) : WebView(context) {
         }
 
         CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         setBackgroundColor(Color.BLACK)
     }
 

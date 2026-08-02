@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -13,13 +14,33 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.lightshield.browser.LightWebView
+import com.lightshield.utils.LightCookieManager
 
 @Composable
 fun BrowserScreen() {
     val context = LocalContext.current
+    val activity = context as? Activity
     var webView by remember { mutableStateOf<LightWebView?>(null) }
     var initialLoaded by remember { mutableStateOf(false) }
+
+    DisposableEffect(activity) {
+        val owner = activity as? androidx.lifecycle.LifecycleOwner
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP -> LightCookieManager.flush()
+                else -> Unit
+            }
+        }
+        owner?.lifecycle?.addObserver(observer)
+        onDispose {
+            owner?.lifecycle?.removeObserver(observer)
+            LightCookieManager.flush()
+        }
+    }
 
     BackHandler {
         val wv = webView
