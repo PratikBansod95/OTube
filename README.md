@@ -20,6 +20,12 @@ gradlew.bat assembleDebug
 gradlew.bat installDebug
 ```
 
+Release builds enable R8 minify + resource shrink (`proguard-rules.pro` keeps the JNI adblock bridge):
+
+```bat
+gradlew.bat assembleRelease
+```
+
 Requires Android SDK (see `local.properties`) and JDK 11+.
 
 ## Build native engine
