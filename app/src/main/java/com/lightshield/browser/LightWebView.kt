@@ -40,9 +40,6 @@ class LightWebView(context: Context) : WebView(context) {
     var isInCustomView: Boolean = false
         private set
 
-    /** Fired on SPA / page navigations so UI can manage the in-app miniplayer. */
-    var onLocationChanged: ((String) -> Unit)? = null
-
     init {
         setLayerType(LAYER_TYPE_NONE, null)
         configureSettings()
@@ -70,7 +67,6 @@ class LightWebView(context: Context) : WebView(context) {
                 super.onPageStarted(view, url, favicon)
                 if (!url.isNullOrBlank()) {
                     documentUrl = url
-                    onLocationChanged?.invoke(url)
                     // Install early so SPA navigations / stalled players recover sooner.
                     if (isYoutubeUrl(url)) {
                         injectPlayerRecovery(view)
@@ -83,7 +79,6 @@ class LightWebView(context: Context) : WebView(context) {
                 super.doUpdateVisitedHistory(view, url, isReload)
                 if (!url.isNullOrBlank()) {
                     documentUrl = url
-                    onLocationChanged?.invoke(url)
                     if (isYoutubeUrl(url)) {
                         injectPlayerRecovery(view)
                         injectOpenAppSuppressor(view)
@@ -115,7 +110,6 @@ class LightWebView(context: Context) : WebView(context) {
                 super.onPageFinished(view, url)
                 if (url == null) return
                 documentUrl = url
-                onLocationChanged?.invoke(url)
                 injectCosmeticFiltersIfNeeded(view, url)
                 if (isYoutubeUrl(url)) {
                     injectPlayerRecovery(view)
