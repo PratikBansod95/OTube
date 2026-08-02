@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.graphics.Color
 import android.net.Uri
+import android.util.Rational
 import android.view.View
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -40,6 +41,17 @@ class LightWebView(context: Context) : WebView(context) {
     var isInCustomView: Boolean = false
         private set
 
+    private var pipPollStarted = false
+    private val pipPollRunnable = object : Runnable {
+        override fun run() {
+            if (!isAttachedToWindow) return
+            refreshPipEligibility { eligible ->
+                onPlaybackEligibilityChanged?.invoke(eligible)
+            }
+            postDelayed(this, 2000L)
+        }
+    }
+
     init {
         setLayerType(LAYER_TYPE_NONE, null)
         configureSettings()
@@ -71,6 +83,7 @@ class LightWebView(context: Context) : WebView(context) {
                     if (isYoutubeUrl(url)) {
                         injectPlayerRecovery(view)
                         injectOpenAppSuppressor(view)
+                        ensurePipEligibilityPolling()
                     }
                 }
             }
@@ -82,6 +95,7 @@ class LightWebView(context: Context) : WebView(context) {
                     if (isYoutubeUrl(url)) {
                         injectPlayerRecovery(view)
                         injectOpenAppSuppressor(view)
+                        ensurePipEligibilityPolling()
                     }
                 }
             }
@@ -114,6 +128,7 @@ class LightWebView(context: Context) : WebView(context) {
                 if (isYoutubeUrl(url)) {
                     injectPlayerRecovery(view)
                     injectOpenAppSuppressor(view)
+                    ensurePipEligibilityPolling()
                 }
             }
         }
@@ -168,6 +183,101 @@ class LightWebView(context: Context) : WebView(context) {
         if (!isInCustomView) return false
         webChromeClient?.onHideCustomView()
         return true
+    }
+
+    var onPipModeChangedListener: ((Boolean) -> Unit)? = null
+    var onPlaybackEligibilityChanged: ((Boolean) -> Unit)? = null
+
+    fun onPipModeChanged(inPip: Boolean) {
+        if (inPip) {
+            applyPipLayout(true)
+        } else {
+            applyPipLayout(false)
+        }
+        onPipModeChangedListener?.invoke(inPip)
+    }
+
+    fun queryPlaybackForPip(callback: (playing: Boolean, aspect: Rational?) -> Unit) {
+        val js = """
+            (function(){
+              var v = document.querySelector('video');
+              if (!v || v.paused || v.ended || v.readyState < 2) return '0|16|9';
+              var w = v.videoWidth || 16;
+              var h = v.videoHeight || 9;
+              if (w < 1) w = 16;
+              if (h < 1) h = 9;
+              return '1|' + w + '|' + h;
+            })();
+        """.trimIndent()
+        evaluateJavascript(js) { raw ->
+            val s = raw?.trim()?.removeSurrounding("\"")?.replace("\\u003C", "<") ?: "0|16|9"
+            val parts = s.split('|')
+            val playing = parts.getOrNull(0) == "1"
+            val w = parts.getOrNull(1)?.toIntOrNull()?.coerceAtLeast(1) ?: 16
+            val h = parts.getOrNull(2)?.toIntOrNull()?.coerceAtLeast(1) ?: 9
+            post { callback(playing, if (playing) Rational(w, h) else null) }
+        }
+    }
+
+    fun refreshPipEligibility(callback: (Boolean) -> Unit) {
+        queryPlaybackForPip { playing, _ -> callback(playing) }
+    }
+
+    /** Poll playback so Android 12+ can auto-enter PiP on Home/gesture. */
+    fun ensurePipEligibilityPolling() {
+        if (pipPollStarted) return
+        pipPollStarted = true
+        post(pipPollRunnable)
+    }
+
+    private fun applyPipLayout(enabled: Boolean) {
+        val js = if (enabled) {
+            """
+            (function(){
+              if (window.__otubePipLayout) return;
+              window.__otubePipLayout = true;
+              var style = document.getElementById('otube-pip-style');
+              if (!style) {
+                style = document.createElement('style');
+                style.id = 'otube-pip-style';
+                (document.head || document.documentElement).appendChild(style);
+              }
+              style.textContent = [
+                'html.otube-pip, html.otube-pip body { background:#000!important; overflow:hidden!important; }',
+                'html.otube-pip ytm-mobile-topbar-renderer,',
+                'html.otube-pip ytm-pivot-bar-renderer,',
+                'html.otube-pip ytm-engagement-panel,',
+                'html.otube-pip #related,',
+                'html.otube-pip ytm-item-section-renderer,',
+                'html.otube-pip ytm-comment-section-renderer,',
+                'html.otube-pip .watch-below-the-player,',
+                'html.otube-pip #masthead-container,',
+                'html.otube-pip #secondary,',
+                'html.otube-pip ytd-watch-next-secondary-results-renderer,',
+                'html.otube-pip #chat,',
+                'html.otube-pip #comments { display:none!important; }',
+                'html.otube-pip video {',
+                '  position:fixed!important; left:0!important; top:0!important;',
+                '  width:100vw!important; height:100vh!important; z-index:2147483646!important;',
+                '  object-fit:contain!important; background:#000!important; max-height:100vh!important;',
+                '}'
+              ].join('\\n');
+              document.documentElement.classList.add('otube-pip');
+              var v = document.querySelector('video');
+              if (v) { try { v.play(); } catch (e) {} }
+            })();
+            """.trimIndent()
+        } else {
+            """
+            (function(){
+              window.__otubePipLayout = false;
+              document.documentElement.classList.remove('otube-pip');
+              var style = document.getElementById('otube-pip-style');
+              if (style) style.remove();
+            })();
+            """.trimIndent()
+        }
+        post { evaluateJavascript(js, null) }
     }
 
     private fun configureSettings() {

@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">OTube</string>
+    <string name="pip_button">PiP</string>
 </resources>
